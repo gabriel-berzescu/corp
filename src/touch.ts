@@ -31,7 +31,7 @@ interface StickState {
   idleTimer: ReturnType<typeof setTimeout> | null;
 }
 
-interface TriggerState { active: boolean; max: number; startedAt: number; }
+interface TriggerState { active: boolean; max: number; startedAt: number; rest: number | null; }
 
 export class Touch {
   private controller: ReturnType<typeof sdl.controller.openDevice> | null = null;
@@ -42,8 +42,8 @@ export class Touch {
     right: { active: false, path: [], maxMag: 0, startedAt: 0, idleTimer: null },
   };
   private triggers: Record<'left' | 'right', TriggerState> = {
-    left: { active: false, max: 0, startedAt: 0 },
-    right: { active: false, max: 0, startedAt: 0 },
+    left: { active: false, max: 0, startedAt: 0, rest: null },
+    right: { active: false, max: 0, startedAt: 0, rest: null },
   };
 
   constructor(private feel: (text: string) => void) {}
@@ -121,11 +121,12 @@ export class Touch {
   private onAxis(axis: string, value: number): void {
     // Normalize e.g. 'leftStickX' → 'leftx', 'rightTrigger' → 'righttrigger'.
     const key = axis.toLowerCase().replace('stick', '');
-    this.axes[key] = value;
     if (key === 'lefttrigger' || key === 'righttrigger') {
+      // onTrigger stores the calibrated value into this.axes itself.
       this.onTrigger(key === 'lefttrigger' ? 'left' : 'right', value);
       return;
     }
+    this.axes[key] = value;
     const side = key.startsWith('left') ? 'left' : key.startsWith('right') ? 'right' : null;
     if (!side) return;
     this.onStick(side);
@@ -167,8 +168,15 @@ export class Touch {
       : `${side} stick swept ${path.join('→')} (max ${s.maxMag.toFixed(2)}, ${dur}s)`);
   }
 
-  private onTrigger(side: 'left' | 'right', value: number): void {
+  private onTrigger(side: 'left' | 'right', raw: number): void {
     const t = this.triggers[side];
+    // Some pads report the trigger as a full-range axis resting at center —
+    // the F310 on Windows sits at 0.50 released, 1.00 fully pulled. Learn the
+    // resting level from the lowest value ever felt and rescale, so rest is
+    // zero regardless of how the hardware reports it.
+    if (t.rest === null || raw < t.rest) t.rest = raw;
+    const value = t.rest >= 1 ? 0 : (raw - t.rest) / (1 - t.rest);
+    this.axes[`${side}trigger`] = value;
     if (!t.active && value > TRIGGER_ON) {
       t.active = true;
       t.max = value;
