@@ -1,0 +1,28 @@
+{
+  "name": "corp",
+  "version": "0.1.0",
+  "description": "corp — an embodiment MCPL server: Logitech F310 touch, microphone hearing, TTS voice, and a drawable face window, in one body",
+  "type": "module",
+  "main": "./dist/src/index.js",
+  "bin": {
+    "corp": "./dist/src/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "clean": "rm -rf dist",
+    "start": "node dist/src/index.js --stdio",
+    "test": "npm run build && node test/smoke.mjs"
+  },
+  "dependencies": {
+    "@animalabs/mcpl-core": "file:../mcpl-core-ts",
+    "@kmamal/sdl": "^0.11.0",
+    "@napi-rs/canvas": "^0.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.5.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}
