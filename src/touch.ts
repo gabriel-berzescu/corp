@@ -6,6 +6,7 @@
  * carrying the compass path it swept. The deadzone is the sensory threshold —
  * a resting stick feels like nothing, exactly as silence sounds like nothing.
  */
+import './sdl-env.js';
 import sdl from '@kmamal/sdl';
 
 const DEADZONE = 0.25;

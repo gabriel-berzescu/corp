@@ -16,6 +16,7 @@
  * Env: CORP_DATA_DIR, CORP_VAD_RMS, CORP_FACE_SIZE, CORP_ORGANS (csv of
  * touch,hearing,voice,face), WHISPER_CLI, WHISPER_MODEL.
  */
+import './sdl-env.js';
 import { McplConnection, method } from '@animalabs/mcpl-core';
 import type { McplInitializeParams, PushEventParams, JsonRpcId } from '@animalabs/mcpl-core';
 import { dirname, join } from 'node:path';
