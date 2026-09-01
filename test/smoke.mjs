@@ -61,7 +61,7 @@ try {
 
   console.log('say:', toolText(await request('tools/call', { name: 'say', arguments: { text: 'Salut, Gabriel! The body works.' } })));
 
-  console.log(`\nperceive (${PERCEIVE_S}s) — move a stick, press a button, or speak...`);
+  console.log(`\nperceive (${PERCEIVE_S}s) — move a stick, squeeze a trigger, or speak...`);
   console.log(toolText(await request('tools/call', { name: 'perceive', arguments: { timeoutSeconds: PERCEIVE_S } })));
 
   console.log('\nsmoke test PASSED');

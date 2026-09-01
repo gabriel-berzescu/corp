@@ -4,7 +4,7 @@ An embodiment MCPL server. One process, one body, four organs:
 
 | organ | hardware | direction | how it feels |
 |---|---|---|---|
-| **touch** | Logitech F310 gamepad | in | buttons → taps/holds with duration; sticks → compass-path gestures (`left stick swept N→NE→E`); triggers → analog squeezes. The deadzone is the sensory threshold. |
+| **touch** | Logitech F310 gamepad | in | analog surfaces only: sticks → compass-path gestures (`left stick swept N→NE→E`); triggers → analog squeezes. Buttons are ignored. The deadzone is the sensory threshold. |
 | **hearing** | laptop microphone | in | continuous, ungated. RMS voice-activity detection segments the stream; whisper.cpp transcribes (`heard (2.1s): "salut"`). Silence is not an event — dormancy is physics, not policy. |
 | **voice** | laptop speakers | out | `say` via Windows SAPI TTS; utterances queue. While speaking, heard segments get an efference-copy label (`may be my own voice`). |
 | **face** | small always-on-top window | out | `face_expression` presets (neutral, happy, joy, curious, thinking, sleepy, surprised, sad, love, wink) or free `face_draw` ops on a canvas. A breathing dot pulses at 10fps so the window always shows the body is alive. |

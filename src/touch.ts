@@ -1,10 +1,12 @@
 /**
  * Touch — the Logitech F310 as a skin.
  *
- * Raw controller events are condensed into felt gestures: a button press
- * becomes one event carrying its duration, a stick excursion becomes one event
- * carrying the compass path it swept. The deadzone is the sensory threshold —
- * a resting stick feels like nothing, exactly as silence sounds like nothing.
+ * Only the analog surfaces are felt: the two sticks and the two triggers.
+ * Buttons (face, bumpers, d-pad, stick clicks) are ignored — they are binary,
+ * not touch-like. A stick excursion becomes one event carrying the compass
+ * path it swept; a trigger squeeze becomes one event carrying its depth. The
+ * deadzone is the sensory threshold — a resting stick feels like nothing,
+ * exactly as silence sounds like nothing.
  */
 import './sdl-env.js';
 import sdl from '@kmamal/sdl';
@@ -13,7 +15,6 @@ const DEADZONE = 0.25;
 const STICK_IDLE_MS = 180; // back inside the deadzone this long ⇒ gesture over
 const TRIGGER_ON = 0.15;
 const TRIGGER_OFF = 0.08;
-const TAP_MS = 350;
 
 const COMPASS = ['E', 'NE', 'N', 'NW', 'W', 'SW', 'S', 'SE'];
 
@@ -36,7 +37,6 @@ interface TriggerState { active: boolean; max: number; startedAt: number; rest: 
 
 export class Touch {
   private controller: ReturnType<typeof sdl.controller.openDevice> | null = null;
-  private presses = new Map<string, number>();
   private axes: Record<string, number> = {};
   private sticks: Record<'left' | 'right', StickState> = {
     left: { active: false, path: [], maxMag: 0, startedAt: 0, idleTimer: null },
@@ -76,7 +76,6 @@ export class Touch {
       const t = this.axes[`${side}trigger`] ?? 0;
       if (t > TRIGGER_ON) parts.push(`${side} trigger at ${t.toFixed(2)}`);
     }
-    if (this.presses.size > 0) parts.push(`held down: ${[...this.presses.keys()].join(', ')}`);
     return parts.length > 0 ? parts.join('; ') : 'at rest';
   }
 
@@ -87,8 +86,8 @@ export class Touch {
     try {
       const instance = sdl.controller.openDevice(device);
       this.controller = instance;
-      instance.on('buttonDown', ({ button }: { button: unknown }) => this.onButtonDown(String(button)));
-      instance.on('buttonUp', ({ button }: { button: unknown }) => this.onButtonUp(String(button)));
+      // Buttons are deliberately not subscribed — only the analog surfaces
+      // (sticks, triggers) reach the sensorium.
       instance.on('axisMotion', ({ axis, value }: { axis: unknown; value: number }) => this.onAxis(String(axis), value));
       instance.on('close', () => { this.controller = null; });
       return device.name ?? 'controller';
@@ -96,27 +95,6 @@ export class Touch {
       console.error('[corp:touch] open failed:', (e as Error).message);
       return null;
     }
-  }
-
-  private onButtonDown(button: string): void {
-    this.presses.set(button, Date.now());
-  }
-
-  private onButtonUp(button: string): void {
-    let downAt = this.presses.get(button);
-    let name = button;
-    if (downAt === undefined && this.presses.size === 1) {
-      // Some builds report the release by index rather than name; with a single
-      // open press there is no ambiguity about which finger lifted.
-      const [k, v] = this.presses.entries().next().value as [string, number];
-      name = k; downAt = v;
-    }
-    if (downAt === undefined) return;
-    this.presses.delete(name);
-    const dur = Date.now() - downAt;
-    this.feel(dur < TAP_MS
-      ? `"${name}" tapped`
-      : `"${name}" held ${(dur / 1000).toFixed(1)}s`);
   }
 
   private onAxis(axis: string, value: number): void {

@@ -48,7 +48,7 @@ function log(...a: unknown[]): void { console.error('[corp]', ...a); }
 
 const declaredFeatureSets: FeatureSetMap = {
   'body.perceive': { description: 'Vigil: the blocking perceive tool and body_status — live inside the body turn by turn', uses: ['tools'] },
-  'body.touch': { description: 'Gamepad sensations (buttons, sticks, triggers) delivered as wakes when no perceiver waits', uses: ['pushEvents'] },
+  'body.touch': { description: 'Gamepad sensations (sticks and triggers only) delivered as wakes when no perceiver waits', uses: ['pushEvents'] },
   'body.hearing': { description: 'Microphone sensations (VAD-segmented, transcribed) delivered as wakes when no perceiver waits', uses: ['pushEvents'] },
   'body.voice': { description: 'Speak through the laptop speakers (say, voice_list)', uses: ['tools'] },
   'body.face': { description: 'Draw on the face window (face_expression, face_draw)', uses: ['tools'] },
