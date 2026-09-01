@@ -4,6 +4,7 @@
  *
  *   touch    — Logitech F310 gamepad (ungated; the deadzone is the threshold)
  *   hearing  — laptop microphone, continuous, VAD-segmented, whisper STT
+ *   sight    — laptop camera via ffmpeg; frame difference is the threshold
  *   voice    — laptop speakers via Windows SAPI
  *   face     — a small always-on-top window the agent draws on
  *
@@ -14,7 +15,8 @@
  *
  * Usage: corp --stdio
  * Env: CORP_DATA_DIR, CORP_VAD_RMS, CORP_FACE_SIZE, CORP_ORGANS (csv of
- * touch,hearing,voice,face), WHISPER_CLI, WHISPER_MODEL.
+ * touch,hearing,sight,voice,face), CORP_CAMERA, CORP_FFMPEG, CORP_SIGHT_DIFF,
+ * CORP_SIGHT_GLANCE (seconds, 0=off), WHISPER_CLI, WHISPER_MODEL.
  */
 import './sdl-env.js';
 import { McplConnection, method } from '@animalabs/mcpl-core';
@@ -32,6 +34,7 @@ import { Sensorium, clockTime } from './senses.js';
 import type { SenseEvent } from './senses.js';
 import { Touch } from './touch.js';
 import { Hearing, findWhisper } from './hearing.js';
+import { Sight } from './sight.js';
 import { Voice } from './voice.js';
 import { Face } from './face.js';
 import type { DrawOp } from './face.js';
@@ -40,7 +43,9 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const DATA_DIR = process.env.CORP_DATA_DIR ?? join(ROOT, 'corp-data');
 const VAD_RMS = Number(process.env.CORP_VAD_RMS ?? '0.012');
 const FACE_SIZE = Number(process.env.CORP_FACE_SIZE ?? '380');
-const ORGANS = new Set((process.env.CORP_ORGANS ?? 'touch,hearing,voice,face').split(',').map((s) => s.trim()));
+const SIGHT_DIFF = Number(process.env.CORP_SIGHT_DIFF ?? '0.05');
+const SIGHT_GLANCE_S = Number(process.env.CORP_SIGHT_GLANCE ?? '0');
+const ORGANS = new Set((process.env.CORP_ORGANS ?? 'touch,hearing,sight,voice,face').split(',').map((s) => s.trim()));
 const DEFAULT_PERCEIVE_S = 25;
 const MAX_PERCEIVE_S = 600;
 
@@ -50,6 +55,7 @@ const declaredFeatureSets: FeatureSetMap = {
   'body.perceive': { description: 'Vigil: the blocking perceive tool and body_status — live inside the body turn by turn', uses: ['tools'] },
   'body.touch': { description: 'Gamepad sensations (sticks and triggers only) delivered as wakes when no perceiver waits', uses: ['pushEvents'] },
   'body.hearing': { description: 'Microphone sensations (VAD-segmented, transcribed) delivered as wakes when no perceiver waits', uses: ['pushEvents'] },
+  'body.sight': { description: 'Camera sensations (movement seen, with snapshots) delivered as wakes when no perceiver waits, plus the deliberate look tool', uses: ['pushEvents', 'tools'] },
   'body.voice': { description: 'Speak through the laptop speakers (say, voice_list)', uses: ['tools'] },
   'body.face': { description: 'Draw on the face window (face_expression, face_draw)', uses: ['tools'] },
 };
@@ -65,11 +71,13 @@ const DRAW_OPS_DOC =
 
 const toolDefinitions = [
   { name: 'perceive',
-    description: 'Live in the body: block until something is felt (gamepad gesture, heard speech/sound, body change), then receive everything since the last delivery plus current posture. Call it again immediately to keep living. Returns on timeout with a stillness report.',
+    description: 'Live in the body: block until something is felt (gamepad gesture, heard speech/sound, movement seen, body change), then receive everything since the last delivery plus current posture. Call it again immediately to keep living. Returns on timeout with a stillness report.',
     inputSchema: { type: 'object' as const, properties: {
       timeoutSeconds: { type: 'number', description: `How long to wait in stillness before returning empty-handed (default ${DEFAULT_PERCEIVE_S}, max ${MAX_PERCEIVE_S}). Mind the host's own tool timeout.` },
     } } },
-  { name: 'body_status', description: 'Report the state of every organ: controller, microphone, voice queue, face window, grants and wake-delivery state.',
+  { name: 'body_status', description: 'Report the state of every organ: controller, microphone, camera, voice queue, face window, grants and wake-delivery state.',
+    inputSchema: { type: 'object' as const, properties: {} } },
+  { name: 'look', description: 'Open the eyes deliberately: return the latest camera frame as an image (at most ~0.5s old).',
     inputSchema: { type: 'object' as const, properties: {} } },
   { name: 'say', description: 'Speak text aloud through the laptop speakers. Utterances queue; returns when spoken.',
     inputSchema: { type: 'object' as const, properties: {
@@ -92,6 +100,24 @@ const toolDefinitions = [
 interface ReqMsg { id: JsonRpcId; method: string; params?: unknown; }
 interface NotifMsg { method: string; params?: unknown; }
 
+type Content = { type: 'text'; text: string } | { type: 'image'; data: string; mimeType: string };
+
+/** Timestamped lines with any carried images interleaved where they were felt. */
+function senseContent(events: SenseEvent[], tail?: string): Content[] {
+  const content: Content[] = [];
+  let lines: string[] = [];
+  const flush = () => {
+    if (lines.length > 0) { content.push({ type: 'text', text: lines.join('\n') }); lines = []; }
+  };
+  for (const e of events) {
+    lines.push(`[${clockTime(e.t)}] ${e.text}`);
+    if (e.image) { flush(); content.push({ type: 'image', ...e.image }); }
+  }
+  if (tail) lines.push(tail);
+  flush();
+  return content;
+}
+
 class CorpServer {
   private conn: McplConnection | null = null;
   private mcplEnabled = false;
@@ -101,6 +127,7 @@ class CorpServer {
   private sensorium = new Sensorium();
   private touch = new Touch((t) => this.sensorium.feel('touch', t));
   private hearing = new Hearing((t) => this.sensorium.feel('hearing', t), join(DATA_DIR, 'sounds'), findWhisper(ROOT), VAD_RMS);
+  private sight = new Sight((t, img) => this.sensorium.feel('sight', t, img), join(DATA_DIR, 'sights'), SIGHT_DIFF, SIGHT_GLANCE_S);
   private voice = new Voice();
   private face = new Face((t) => this.sensorium.feel('body', t), FACE_SIZE);
   private organNotes: string[] = [];
@@ -108,6 +135,7 @@ class CorpServer {
   wakeOrgans(): void {
     if (ORGANS.has('touch')) this.organNotes.push(`touch: ${this.touch.start()}`);
     if (ORGANS.has('hearing')) this.organNotes.push(`hearing: ${this.hearing.start()}`);
+    if (ORGANS.has('sight')) this.organNotes.push(`sight: ${this.sight.start()}`);
     if (ORGANS.has('face')) this.organNotes.push(`face: ${this.face.start()}`);
     if (ORGANS.has('voice')) this.organNotes.push('voice: ready');
     for (const note of this.organNotes) log(note);
@@ -215,7 +243,7 @@ class CorpServer {
     const conn = this.conn;
     if (!conn) return;
     const organToFs: Record<string, string> = {
-      touch: 'body.touch', body: 'body.touch', hearing: 'body.hearing',
+      touch: 'body.touch', body: 'body.touch', hearing: 'body.hearing', sight: 'body.sight',
     };
     const byFs = new Map<string, SenseEvent[]>();
     for (const e of events) {
@@ -226,13 +254,12 @@ class CorpServer {
     for (const [fs, evs] of byFs) {
       const blocked = this.pushBlockedReason(fs);
       if (blocked) { log(`suppressed ${evs.length} ${fs} sensation(s) — ${blocked}`); continue; }
-      const text = evs.map((e) => `[${clockTime(e.t)}] ${e.text}`).join('\n');
       const params: PushEventParams = {
         featureSet: fs,
         eventId: `sense_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
         timestamp: new Date().toISOString(),
         origin: { source: 'corp', organ: fs.split('.')[1] },
-        payload: { content: [{ type: 'text', text }] },
+        payload: { content: senseContent(evs) },
       };
       conn.sendRequest(method.PUSH_EVENT, params)
         .then((r) => {
@@ -251,6 +278,7 @@ class CorpServer {
 
   private postureLine(): string {
     return `— now ${clockTime(Date.now())} | touch: ${this.touch.posture()} | ${this.hearing.status()}`
+      + ` | sight: ${this.sight.status()}`
       + ` | face: ${this.face.open ? this.face.currentExpression : 'window closed'}`;
   }
 
@@ -265,17 +293,17 @@ class CorpServer {
           const stillness = Math.round((Date.now() - before) / 1000);
           return this.text(`(${stillness}s of stillness — nothing felt)\n${this.postureLine()}`);
         }
-        const lines = events.map((e) => `[${clockTime(e.t)}] ${e.text}`);
-        return this.text(`${lines.join('\n')}\n${this.postureLine()}`);
+        return { content: senseContent(events, this.postureLine()) };
       }
       case 'body_status': {
         const receipt = this.policyReady ? buildReceipt(declaredFeatureSets, this.grant) : null;
-        const wakes = (['body.touch', 'body.hearing'] as const)
+        const wakes = (['body.touch', 'body.hearing', 'body.sight'] as const)
           .map((fs) => `${fs}: ${this.pushBlockedReason(fs) ?? 'wakes deliverable'}`);
         return this.text([
           `organs at start: ${this.organNotes.join(' | ') || '(none started)'}`,
           `touch: ${this.touch.connected ? `connected — ${this.touch.posture()}` : 'no controller'}`,
           `hearing: ${this.hearing.status()}`,
+          `sight: ${this.sight.status()}`,
           `face: ${this.face.open ? `open, showing ${this.face.currentExpression}` : 'window closed'}`,
           `policy: ${this.mcplEnabled ? (this.policyReady ? `ready, mode=${receipt!.mode}, grant=[${this.grant.patterns.join(', ')}]` : 'awaiting featureSets/update Request') : 'MCP-only host'}`,
           ...wakes,
@@ -293,6 +321,15 @@ class CorpServer {
       }
       case 'voice_list':
         return this.text(await this.voice.voices());
+      case 'look': {
+        if (!this.sight.watching) return this.text(`cannot look — sight is ${this.sight.status()}.`, true);
+        const glimpse = this.sight.look();
+        if (!glimpse) return this.text('eyes still opening — no frame has arrived yet.', true);
+        return { content: [
+          { type: 'text', text: `looking (frame ${(glimpse.ageMs / 1000).toFixed(1)}s old):` },
+          { type: 'image', ...glimpse.image },
+        ] as Content[] };
+      }
       case 'face_expression': {
         const name2 = typeof args.name === 'string' ? args.name : '';
         if (!this.face.open) return this.text('the face window is closed.', true);

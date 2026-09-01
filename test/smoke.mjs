@@ -1,6 +1,6 @@
 // Smoke test: spawn corp, do the MCPL host handshake, poke every organ.
 // The face window will appear, an expression will show, and a short phrase
-// will be spoken aloud. Gamepad/mic events during the perceive window print.
+// will be spoken aloud. Gamepad/mic/camera events during the perceive window print.
 import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
 
@@ -35,7 +35,9 @@ createInterface({ input: proc.stdout }).on('line', (line) => {
   console.log('[server msg]', JSON.stringify(msg).slice(0, 200));
 });
 
-const toolText = (r) => r?.content?.[0]?.text ?? JSON.stringify(r);
+const toolText = (r) => (r?.content ?? [])
+  .map((c) => c.type === 'image' ? `<image ${c.mimeType}, ${Math.round(c.data.length * 3 / 4 / 1024)}KB>` : c.text)
+  .join('\n') || JSON.stringify(r);
 
 try {
   const init = await request('initialize', {
@@ -48,7 +50,7 @@ try {
 
   const receipt = await request('featureSets/update', {
     effectiveCapabilities: ['tools', 'pushEvents'],
-    enabled: ['body.perceive', 'body.touch', 'body.hearing', 'body.voice', 'body.face'],
+    enabled: ['body.perceive', 'body.touch', 'body.hearing', 'body.sight', 'body.voice', 'body.face'],
   });
   console.log('policy receipt:', JSON.stringify(receipt));
 
@@ -61,7 +63,9 @@ try {
 
   console.log('say:', toolText(await request('tools/call', { name: 'say', arguments: { text: 'Salut, Gabriel! The body works.' } })));
 
-  console.log(`\nperceive (${PERCEIVE_S}s) — move a stick, squeeze a trigger, or speak...`);
+  console.log('\nlook:', toolText(await request('tools/call', { name: 'look', arguments: {} })));
+
+  console.log(`\nperceive (${PERCEIVE_S}s) — move a stick, squeeze a trigger, wave at the camera, or speak...`);
   console.log(toolText(await request('tools/call', { name: 'perceive', arguments: { timeoutSeconds: PERCEIVE_S } })));
 
   console.log('\nsmoke test PASSED');

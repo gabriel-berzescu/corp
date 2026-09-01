@@ -16,8 +16,9 @@
 
 export interface SenseEvent {
   t: number; // epoch ms
-  organ: 'touch' | 'hearing' | 'body';
+  organ: 'touch' | 'hearing' | 'sight' | 'body';
   text: string;
+  image?: { data: string; mimeType: string }; // base64; rides along with the text
 }
 
 interface Waiter {
@@ -41,8 +42,8 @@ export class Sensorium {
   ) {}
 
   /** An organ reports something felt. */
-  feel(organ: SenseEvent['organ'], text: string): void {
-    this.pending.push({ t: Date.now(), organ, text });
+  feel(organ: SenseEvent['organ'], text: string, image?: SenseEvent['image']): void {
+    this.pending.push({ t: Date.now(), organ, text, ...(image ? { image } : {}) });
     if (this.pending.length > MAX_PENDING) this.pending.splice(0, this.pending.length - MAX_PENDING);
     if (this.waiter) {
       // Vigil lane: let the rest of the gesture land, then wake the perceiver.
